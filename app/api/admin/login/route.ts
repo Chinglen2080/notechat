@@ -13,9 +13,12 @@ export async function POST(req: Request) {
   const { password } = await req.json()
   if (!password) return NextResponse.json({ error: 'No password' }, { status: 400 })
 
+  const adminToken = process.env.ADMIN_TOKEN
+  if (!adminToken) return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
+
   const supabase = getSupabase()
 
-  // Check admin_passwords table
+  // Check admin_passwords table (main + duress)
   const { data: adminPws } = await supabase.from('admin_passwords').select('*')
   if (adminPws) {
     for (const row of adminPws) {
@@ -28,25 +31,25 @@ export async function POST(req: Request) {
             .update({ password_hash: afterDuressHash, requires_change: true })
             .eq('is_main', true)
           await supabase.from('duress_events').insert({ triggered_at: new Date().toISOString() })
-          return NextResponse.json({ ok: true, duress: true, requiresChange: false })
+          // Return token so the fake empty admin panel can still render
+          return NextResponse.json({ ok: true, duress: true, requiresChange: false, token: adminToken })
         }
-        return NextResponse.json({ ok: true, duress: false, requiresChange: row.requires_change })
+        return NextResponse.json({ ok: true, duress: false, requiresChange: row.requires_change, token: adminToken })
       }
     }
   }
 
-  // Check Password table (unhashed pool)
+  // Check Password pool table
   const { data: poolPws } = await supabase.from('Password').select('*').eq('active', true)
   if (poolPws) {
     for (const row of poolPws) {
-      // Try direct match (unhashed) then hash match
       const directMatch = row.password === password
       let hashMatch = false
       if (!directMatch) {
         try { hashMatch = await verifyPassword(password, row.password) } catch {}
       }
       if (directMatch || hashMatch) {
-        return NextResponse.json({ ok: true, duress: false, requiresChange: false, poolAuth: true })
+        return NextResponse.json({ ok: true, duress: false, requiresChange: false, token: adminToken })
       }
     }
   }
