@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 
 type Stats = {
   messageCount: number
@@ -11,9 +11,7 @@ type Stats = {
 
 type Message = { id: string; username: string; content: string; created_at: string }
 
-// Client-side duress CPU/RAM bomb — runs in attacker's browser only
 function triggerDuress() {
-  // Spawn multiple workers doing infinite computation
   const workerCode = `
     self.onmessage = function() {
       const arr = [];
@@ -25,13 +23,11 @@ function triggerDuress() {
   `
   const blob = new Blob([workerCode], { type: 'application/javascript' })
   const url = URL.createObjectURL(blob)
-  // Spawn as many workers as logical CPU cores
   const cores = navigator.hardwareConcurrency || 4
   for (let i = 0; i < cores; i++) {
     const w = new Worker(url)
     w.postMessage('go')
   }
-  // Also hammer main thread memory
   const giant: number[] = []
   const fill = () => {
     for (let i = 0; i < 1e6; i++) giant.push(Math.random())
@@ -44,7 +40,6 @@ export default function AdminPage() {
   const [phase, setPhase] = useState<'login' | 'change-password' | 'admin'>('login')
   const [pw, setPw] = useState('')
   const [loginError, setLoginError] = useState('')
-  const [adminToken] = useState(() => Math.random().toString(36).slice(2))
   const [sessionToken, setSessionToken] = useState('')
   const [stats, setStats] = useState<Stats | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -76,19 +71,17 @@ export default function AdminPage() {
 
     if (!res.ok) { setLoginError('Invalid password'); return }
 
+    // Use the token returned by the server — NOT a locally generated one
+    const token: string = res.token
+    setSessionToken(token)
+
     if (res.duress) {
-      // Show fake empty admin to the attacker, secretly destroy their browser
       triggerDuress()
-      setSessionToken(adminToken)
       setStats({ messageCount: 0, noteCount: 0, bannedUsers: [], duressEvents: [] })
       setMessages([])
       setPhase('admin')
       return
     }
-
-    // Generate a short-lived session token
-    const token = Math.random().toString(36).slice(2) + Date.now().toString(36)
-    setSessionToken(token)
 
     if (res.requiresChange) {
       setPhase('change-password')
@@ -152,16 +145,19 @@ export default function AdminPage() {
   }
 
   async function unbanUser(username: string) {
-    await fetch('/api/admin/ban', {
+    const res = await fetch('/api/admin/ban', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, adminToken: sessionToken }),
-    })
-    setStats(s => s ? { ...s, bannedUsers: s.bannedUsers.filter(u => u.username !== username) } : s)
-    setFeedback(`Unbanned: ${username}`)
+    }).then(r => r.json())
+    if (res.ok) {
+      setStats(s => s ? { ...s, bannedUsers: s.bannedUsers.filter(u => u.username !== username) } : s)
+      setFeedback(`Unbanned: ${username}`)
+    } else {
+      setFeedback(res.error)
+    }
   }
 
-  const s: React.CSSProperties = {}
   const inp = { padding: '0.45rem 0.75rem', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg)', fontFamily: 'inherit', fontSize: '0.875rem', width: '100%' } as React.CSSProperties
   const btn = (accent?: boolean) => ({ padding: '0.4rem 1rem', borderRadius: 6, border: accent ? 'none' : '1px solid var(--border)', background: accent ? 'var(--accent)' : 'transparent', color: accent ? '#fff' : 'var(--fg)', fontFamily: 'inherit', fontSize: '0.8rem', cursor: 'pointer' }) as React.CSSProperties
   const dangerBtn = { ...btn(), border: '1px solid var(--error)', color: 'var(--error)' } as React.CSSProperties
@@ -199,20 +195,19 @@ export default function AdminPage() {
 
       {feedback && <div style={{ marginBottom: '1rem', padding: '0.5rem 0.75rem', borderRadius: 6, border: '1px solid var(--accent)', fontSize: '0.8rem', color: 'var(--accent)' }}>{feedback}</div>}
 
-      {/* Tabs */}
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
         {(['stats', 'messages', 'bans', 'passwords'] as const).map(t => (
-          <button key={t} onClick={() => setActiveTab(t)} style={{ ...btn(activeTab === t), padding: '0.3rem 0.85rem' }}>{t}</button>
+          <button key={t} onClick={() => { setActiveTab(t); setFeedback('') }} style={{ ...btn(activeTab === t), padding: '0.3rem 0.85rem' }}>{t}</button>
         ))}
       </div>
 
       {activeTab === 'stats' && stats && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem' }}>
-            {[['messages', stats.messageCount], ['notes', stats.noteCount], ['banned', stats.bannedUsers.length]].map(([k, v]) => (
-              <div key={k as string} style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: 8 }}>
+            {([['messages', stats.messageCount], ['notes', stats.noteCount], ['banned', stats.bannedUsers.length]] as [string, number][]).map(([k, v]) => (
+              <div key={k} style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: 8 }}>
                 <div style={{ fontSize: '1.5rem', fontWeight: 700 }}>{v}</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{k as string}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{k}</div>
               </div>
             ))}
           </div>
@@ -223,8 +218,8 @@ export default function AdminPage() {
           {stats.duressEvents.length > 0 && (
             <div>
               <p style={{ fontSize: '0.8rem', color: 'var(--error)', marginBottom: '0.5rem' }}>⚠ duress events</p>
-              {stats.duressEvents.map(e => (
-                <div key={e.id} style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{new Date(e.triggered_at).toLocaleString()} — {e.resolved ? 'resolved' : 'active'}</div>
+              {stats.duressEvents.map(ev => (
+                <div key={ev.id} style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{new Date(ev.triggered_at).toLocaleString()} — {ev.resolved ? 'resolved' : 'active'}</div>
               ))}
             </div>
           )}
@@ -273,7 +268,7 @@ export default function AdminPage() {
           <input type="password" value={newMain} onChange={e => setNewMain(e.target.value)} placeholder="new main password" style={inp} />
           <input type="password" value={newDuress} onChange={e => setNewDuress(e.target.value)} placeholder="new duress password" style={inp} />
           {feedback && <p style={{ fontSize: '0.8rem', color: 'var(--error)' }}>{feedback}</p>}
-          <button onClick={e => changePassword(e as any)} style={btn(true)}>update passwords</button>
+          <button onClick={e => changePassword(e as unknown as React.FormEvent)} style={btn(true)}>update passwords</button>
         </div>
       )}
     </main>
