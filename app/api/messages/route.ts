@@ -1,12 +1,15 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
+function getSupabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
+}
 
 export async function GET() {
+  const supabase = getSupabase()
   const { data, error } = await supabase
     .from('messages')
     .select('*')
@@ -17,6 +20,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const supabase = getSupabase()
   const { username, content } = await req.json()
   if (!username?.trim() || !content?.trim())
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
