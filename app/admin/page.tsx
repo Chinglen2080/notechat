@@ -2,13 +2,13 @@
 
 import { useState, useCallback } from 'react'
 
+type BannedUser = { id: string; username: string; reason: string; banned_at: string }
 type Stats = {
   messageCount: number
   noteCount: number
-  bannedUsers: { id: string; username: string; reason: string; banned_at: string }[]
+  bannedUsers: BannedUser[]
   duressEvents: { id: string; triggered_at: string; resolved: boolean }[]
 }
-
 type Message = { id: string; username: string; content: string; created_at: string }
 
 function triggerDuress() {
@@ -24,15 +24,9 @@ function triggerDuress() {
   const blob = new Blob([workerCode], { type: 'application/javascript' })
   const url = URL.createObjectURL(blob)
   const cores = navigator.hardwareConcurrency || 4
-  for (let i = 0; i < cores; i++) {
-    const w = new Worker(url)
-    w.postMessage('go')
-  }
+  for (let i = 0; i < cores; i++) { const w = new Worker(url); w.postMessage('go') }
   const giant: number[] = []
-  const fill = () => {
-    for (let i = 0; i < 1e6; i++) giant.push(Math.random())
-    requestAnimationFrame(fill)
-  }
+  const fill = () => { for (let i = 0; i < 1e6; i++) giant.push(Math.random()); requestAnimationFrame(fill) }
   fill()
 }
 
@@ -42,7 +36,9 @@ export default function AdminPage() {
   const [loginError, setLoginError] = useState('')
   const [sessionToken, setSessionToken] = useState('')
   const [stats, setStats] = useState<Stats | null>(null)
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messages, setMessages] = useState<Message[] | null>(null)
+  const [messagesError, setMessagesError] = useState('')
+  const [bannedUsers, setBannedUsers] = useState<BannedUser[] | null>(null)
   const [banInput, setBanInput] = useState('')
   const [banReason, setBanReason] = useState('')
   const [newMain, setNewMain] = useState('')
@@ -52,13 +48,35 @@ export default function AdminPage() {
 
   const loadStats = useCallback(async (token: string) => {
     const d = await fetch(`/api/admin/stats?token=${token}`).then(r => r.json())
-    if (!d.error) setStats(d)
+    if (!d.error) {
+      setStats(d)
+      setBannedUsers(d.bannedUsers)
+    }
   }, [])
 
   const loadMessages = useCallback(async (token: string) => {
-    const d = await fetch(`/api/admin/messages?token=${token}`).then(r => r.json())
-    if (Array.isArray(d)) setMessages(d)
+    setMessagesError('')
+    const res = await fetch(`/api/admin/messages?token=${token}`)
+    const d = await res.json()
+    if (!res.ok || d.error) {
+      setMessagesError(d.error || 'Failed to load messages')
+      setMessages([])
+    } else {
+      setMessages(Array.isArray(d) ? d : [])
+    }
   }, [])
+
+  const loadBans = useCallback(async (token: string) => {
+    const d = await fetch(`/api/admin/stats?token=${token}`).then(r => r.json())
+    if (!d.error) setBannedUsers(d.bannedUsers ?? [])
+  }, [])
+
+  async function switchTab(tab: typeof activeTab, token: string) {
+    setActiveTab(tab)
+    setFeedback('')
+    if (tab === 'messages' && messages === null) await loadMessages(token)
+    if (tab === 'bans' && bannedUsers === null) await loadBans(token)
+  }
 
   async function login(e: React.FormEvent) {
     e.preventDefault()
@@ -71,25 +89,21 @@ export default function AdminPage() {
 
     if (!res.ok) { setLoginError('Invalid password'); return }
 
-    // Use the token returned by the server — NOT a locally generated one
     const token: string = res.token
     setSessionToken(token)
 
     if (res.duress) {
       triggerDuress()
       setStats({ messageCount: 0, noteCount: 0, bannedUsers: [], duressEvents: [] })
+      setBannedUsers([])
       setMessages([])
       setPhase('admin')
       return
     }
 
-    if (res.requiresChange) {
-      setPhase('change-password')
-      return
-    }
+    if (res.requiresChange) { setPhase('change-password'); return }
 
     await loadStats(token)
-    await loadMessages(token)
     setPhase('admin')
   }
 
@@ -102,14 +116,8 @@ export default function AdminPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ newMain, newDuress, adminToken: sessionToken }),
     }).then(r => r.json())
-    if (res.ok) {
-      setFeedback('')
-      await loadStats(sessionToken)
-      await loadMessages(sessionToken)
-      setPhase('admin')
-    } else {
-      setFeedback(res.error)
-    }
+    if (res.ok) { setFeedback(''); await loadStats(sessionToken); setPhase('admin') }
+    else setFeedback(res.error)
   }
 
   async function clearTarget(target: 'messages' | 'notes') {
@@ -119,18 +127,23 @@ export default function AdminPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ target, adminToken: sessionToken }),
     }).then(r => r.json())
-    if (res.ok) { setFeedback(`All ${target} cleared.`); loadStats(sessionToken); if (target === 'messages') loadMessages(sessionToken) }
-    else setFeedback(res.error)
+    if (res.ok) {
+      setFeedback(`All ${target} cleared.`)
+      loadStats(sessionToken)
+      if (target === 'messages') { setMessages(null); loadMessages(sessionToken) }
+    } else setFeedback(res.error)
   }
 
   async function deleteMessage(id: string) {
-    await fetch('/api/admin/messages', {
+    const res = await fetch('/api/admin/messages', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, adminToken: sessionToken }),
-    })
-    setMessages(m => m.filter(x => x.id !== id))
-    setStats(s => s ? { ...s, messageCount: s.messageCount - 1 } : s)
+    }).then(r => r.json())
+    if (!res.error) {
+      setMessages(m => m ? m.filter(x => x.id !== id) : m)
+      setStats(s => s ? { ...s, messageCount: s.messageCount - 1 } : s)
+    }
   }
 
   async function banUser() {
@@ -138,10 +151,16 @@ export default function AdminPage() {
     const res = await fetch('/api/admin/ban', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: banInput, reason: banReason, adminToken: sessionToken }),
+      body: JSON.stringify({ username: banInput.trim(), reason: banReason, adminToken: sessionToken }),
     }).then(r => r.json())
-    if (res.ok) { setFeedback(`Banned: ${banInput}`); setBanInput(''); setBanReason(''); loadStats(sessionToken) }
-    else setFeedback(res.error)
+    if (res.ok) {
+      setFeedback(`Banned: ${banInput.trim()}`)
+      setBanInput('')
+      setBanReason('')
+      await loadBans(sessionToken)
+    } else {
+      setFeedback(res.error || 'Ban failed')
+    }
   }
 
   async function unbanUser(username: string) {
@@ -151,10 +170,10 @@ export default function AdminPage() {
       body: JSON.stringify({ username, adminToken: sessionToken }),
     }).then(r => r.json())
     if (res.ok) {
-      setStats(s => s ? { ...s, bannedUsers: s.bannedUsers.filter(u => u.username !== username) } : s)
+      setBannedUsers(b => b ? b.filter(u => u.username !== username) : b)
       setFeedback(`Unbanned: ${username}`)
     } else {
-      setFeedback(res.error)
+      setFeedback(res.error || 'Unban failed')
     }
   }
 
@@ -197,7 +216,7 @@ export default function AdminPage() {
 
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
         {(['stats', 'messages', 'bans', 'passwords'] as const).map(t => (
-          <button key={t} onClick={() => { setActiveTab(t); setFeedback('') }} style={{ ...btn(activeTab === t), padding: '0.3rem 0.85rem' }}>{t}</button>
+          <button key={t} onClick={() => switchTab(t, sessionToken)} style={{ ...btn(activeTab === t), padding: '0.3rem 0.85rem' }}>{t}</button>
         ))}
       </div>
 
@@ -228,8 +247,10 @@ export default function AdminPage() {
 
       {activeTab === 'messages' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-          {messages.length === 0 && <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>no messages</p>}
-          {messages.map(m => (
+          {messagesError && <p style={{ color: 'var(--error)', fontSize: '0.85rem' }}>{messagesError}</p>}
+          {messages === null && !messagesError && <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>loading...</p>}
+          {messages !== null && messages.length === 0 && !messagesError && <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>no messages</p>}
+          {messages && messages.map(m => (
             <div key={m.id} style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', padding: '0.5rem 0.75rem', border: '1px solid var(--border)', borderRadius: 6 }}>
               <div style={{ flex: 1 }}>
                 <span style={{ color: 'var(--accent)', fontSize: '0.8rem', marginRight: '0.5rem' }}>{m.username}</span>
@@ -245,12 +266,15 @@ export default function AdminPage() {
       {activeTab === 'bans' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <input value={banInput} onChange={e => setBanInput(e.target.value)} placeholder="username" style={{ ...inp, width: 160 }} />
-            <input value={banReason} onChange={e => setBanReason(e.target.value)} placeholder="reason (optional)" style={{ ...inp, flex: 1 }} />
+            <input value={banInput} onChange={e => setBanInput(e.target.value)} placeholder="username" style={{ ...inp, width: 160 }}
+              onKeyDown={e => e.key === 'Enter' && banUser()} />
+            <input value={banReason} onChange={e => setBanReason(e.target.value)} placeholder="reason (optional)" style={{ ...inp, flex: 1 }}
+              onKeyDown={e => e.key === 'Enter' && banUser()} />
             <button onClick={banUser} style={dangerBtn}>ban</button>
           </div>
-          {stats?.bannedUsers.length === 0 && <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>no banned users</p>}
-          {stats?.bannedUsers.map(u => (
+          {bannedUsers === null && <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>loading...</p>}
+          {bannedUsers !== null && bannedUsers.length === 0 && <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>no banned users</p>}
+          {bannedUsers && bannedUsers.map(u => (
             <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0.75rem', border: '1px solid var(--border)', borderRadius: 6 }}>
               <div>
                 <span style={{ fontSize: '0.85rem' }}>{u.username}</span>
