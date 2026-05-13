@@ -124,7 +124,7 @@ export default function Home() {
   const [unlockError, setUnlockError] = useState('')
   const [decryptedContent, setDecryptedContent] = useState('')
   const [pendingDuress, setPendingDuress] = useState(false)
-  const [noteViewMode, setNoteViewMode] = useState<'edit' | 'preview'>('edit')
+  const [noteViewMode, setNoteViewMode] = useState<'edit' | 'preview'>('preview')
 
   useEffect(() => {
     if (tab !== 'chat') return
@@ -204,13 +204,13 @@ export default function Home() {
     setUnlockPhase('locked'); setUnlockPw(''); setUnlockError('')
     setDecryptedContent(''); setPendingDuress(false)
     setIsProtecting(false); setNotePassword(''); setNoteDuressPassword(''); setNoteDecoyContent('')
-    setNoteViewMode('edit')
+    setNoteViewMode('preview')
   }
 
   function openNote(note: Note) {
     setActiveNote(note); setNoteTitle(note.title)
     setUnlockPhase('locked'); setUnlockPw(''); setUnlockError(''); setPendingDuress(false)
-    setNoteViewMode('edit')
+    setNoteViewMode('preview')
     if (!note.is_protected) { setNoteContent(note.content) }
     else { setNoteContent(''); setDecryptedContent('') }
   }
@@ -273,7 +273,7 @@ export default function Home() {
           <form onSubmit={sendMessage} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <input value={username} onChange={e => setUsername(e.target.value)} placeholder="your name" style={{ ...inp, width: '100%' }} />
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <input value={msgInput} onChange={e => setMsgInput(e.target.value)} placeholder="message" style={{ ...inp, flex: 1 }} />
+              <input value={msgInput} onChange={e => setMsgInput(e.target.value)} placeholder="message or image url..." style={{ ...inp, flex: 1 }} />
               <button type="submit" disabled={sending} style={{ padding: '0.5rem 1.25rem', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontSize: '0.875rem', cursor: 'pointer', opacity: sending ? 0.6 : 1 }}>send</button>
             </div>
             {sendError && <p style={{ fontSize: '0.8rem', color: 'var(--error)' }}>{sendError}</p>}
@@ -319,14 +319,14 @@ export default function Home() {
               <>
                 {!activeNote?.is_protected && (
                   <div style={{ display: 'flex', gap: '0.4rem' }}>
-                    {(['edit', 'preview'] as const).map(m => (
+                    {(['preview', 'edit'] as const).map(m => (
                       <button key={m} onClick={() => setNoteViewMode(m)} style={{ padding: '0.2rem 0.7rem', borderRadius: 5, border: '1px solid var(--border)', background: noteViewMode === m ? 'var(--fg)' : 'transparent', color: noteViewMode === m ? 'var(--bg)' : 'var(--fg)', fontFamily: 'inherit', fontSize: '0.75rem', cursor: 'pointer' }}>{m}</button>
                     ))}
                   </div>
                 )}
                 {noteViewMode === 'preview' || (activeNote?.is_protected && !!noteContent) ? (
                   <div style={{ ...inp, minHeight: 200, lineHeight: 1.7, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                    {renderNoteContent(noteContent)}
+                    {noteContent ? renderNoteContent(noteContent) : <span style={{ color: 'var(--muted)' }}>nothing here yet — switch to edit to write</span>}
                   </div>
                 ) : (
                   <textarea value={noteContent} onChange={e => setNoteContent(e.target.value)} placeholder="write something... paste image urls to embed" rows={12}
