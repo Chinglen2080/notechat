@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { SpeedInsights } from '@vercel/speed-insights/next'
-import './globals.css'
+import CssGate from './css-gate'
 
 export const metadata: Metadata = {
   title: 'NoteChat',
@@ -9,14 +9,13 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="dark">
+    <html lang="en">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300..700&display=swap" rel="stylesheet" />
       </head>
       <body>
-        {children}
+        <CssGate>{children}</CssGate>
         <SpeedInsights />
       </body>
     </html>
