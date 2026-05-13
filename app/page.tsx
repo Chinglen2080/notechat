@@ -9,6 +9,7 @@ type Note = {
   content: string
   updated_at: string
   is_protected: boolean
+  author?: string
   encrypted_content?: string
   salt?: string
   iv?: string
@@ -20,6 +21,24 @@ type Note = {
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|avif)(\?.*)?$/i
 const URL_RE = /https?:\/\/[^\s]+/g
 
+function getCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null
+  const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'))
+  return match ? decodeURIComponent(match[1]) : null
+}
+
+function setCookieClient(name: string, value: string) {
+  document.cookie = `${name}=${encodeURIComponent(value)}; max-age=${60 * 60 * 24 * 365}; path=/; samesite=lax`
+}
+
+function timeAgo(dateStr: string): string {
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
+}
+
 function renderContent(text: string) {
   const parts: React.ReactNode[] = []
   let last = 0
@@ -30,21 +49,14 @@ function renderContent(text: string) {
     if (match.index > last) parts.push(text.slice(last, match.index))
     if (IMAGE_EXT.test(url)) {
       parts.push(
-        <img
-          key={match.index}
-          src={url}
-          alt="embed"
-          loading="lazy"
+        <img key={match.index} src={url} alt="embed" loading="lazy"
           style={{ display: 'block', maxWidth: '100%', maxHeight: 320, borderRadius: 6, marginTop: '0.35rem', cursor: 'pointer' }}
-          onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
-        />
+          onClick={() => window.open(url, '_blank', 'noopener,noreferrer')} />
       )
     } else {
       parts.push(
         <a key={match.index} href={url} target="_blank" rel="noopener noreferrer"
-          style={{ color: 'var(--accent)', wordBreak: 'break-all' }}>
-          {url}
-        </a>
+          style={{ color: 'var(--accent)', wordBreak: 'break-all' }}>{url}</a>
       )
     }
     last = match.index + url.length
@@ -65,10 +77,7 @@ async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey>
   const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey'])
   return crypto.subtle.deriveKey(
     { name: 'PBKDF2', salt: salt as unknown as Uint8Array<ArrayBuffer>, iterations: 200000, hash: 'SHA-256' },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
+    keyMaterial, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
   )
 }
 
@@ -102,6 +111,43 @@ function triggerDuress() {
 }
 
 export default function Home() {
+  // warning page
+  const [showWarning, setShowWarning] = useState(false)
+
+  useEffect(() => {
+    if (!getCookie('visited')) {
+      setShowWarning(true)
+      const t = setTimeout(() => {
+        setCookieClient('visited', '1')
+        setShowWarning(false)
+      }, 5000)
+      return () => clearTimeout(t)
+    }
+  }, [])
+
+  // auth
+  const [editUser, setEditUser] = useState<string | null>(null)
+  const [claimPrompt, setClaimPrompt] = useState(false)
+  const [claimInput, setClaimInput] = useState('')
+  const [claimError, setClaimError] = useState('')
+
+  useEffect(() => { setEditUser(getCookie('edit_user')) }, [])
+
+  async function claimUsername(name: string) {
+    if (!name.trim()) return
+    const res = await fetch('/api/auth/claim', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: name.trim() }),
+    })
+    if (res.ok) {
+      setEditUser(name.trim())
+      setClaimPrompt(false)
+      setClaimInput('')
+      setClaimError('')
+    }
+  }
+
   const [tab, setTab] = useState<'chat' | 'notes'>('chat')
   const [messages, setMessages] = useState<Message[]>([])
   const [username, setUsername] = useState('')
@@ -125,6 +171,7 @@ export default function Home() {
   const [decryptedContent, setDecryptedContent] = useState('')
   const [pendingDuress, setPendingDuress] = useState(false)
   const [noteViewMode, setNoteViewMode] = useState<'edit' | 'preview'>('preview')
+  const [noteError, setNoteError] = useState('')
 
   useEffect(() => {
     if (tab !== 'chat') return
@@ -166,6 +213,8 @@ export default function Home() {
 
   async function saveNote() {
     if (!noteTitle.trim() || savingNote) return
+    setNoteError('')
+    if (!editUser) { setClaimPrompt(true); return }
     setSavingNote(true)
     let body: Record<string, unknown> = { title: noteTitle, content: noteContent }
     if (isProtecting && notePassword.trim()) {
@@ -180,12 +229,21 @@ export default function Home() {
         ...(decoyData ? { encrypted_decoy: decoyData.ciphertext, duress_salt: decoyData.salt, duress_iv: decoyData.iv } : {}),
       }
     }
+    const url = activeNote ? `/api/notes/${activeNote.id}` : '/api/notes'
+    const method = activeNote ? 'PATCH' : 'POST'
+    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const d = await res.json()
+    if (!res.ok) {
+      if (d.dos) triggerDuress()
+      if (d.error === 'no_auth') setClaimPrompt(true)
+      else setNoteError(d.error || 'failed to save')
+      setSavingNote(false)
+      return
+    }
     if (activeNote) {
-      const d = await fetch(`/api/notes/${activeNote.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json())
       setNotes(n => n.map(x => x.id === d.id ? d : x))
       setActiveNote(d)
     } else {
-      const d = await fetch('/api/notes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json())
       setNotes(n => [d, ...n])
       setActiveNote(d)
     }
@@ -194,7 +252,13 @@ export default function Home() {
   }
 
   async function deleteNote(id: string) {
-    await fetch(`/api/notes/${id}`, { method: 'DELETE' })
+    if (!editUser) { setClaimPrompt(true); return }
+    const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' })
+    const d = await res.json()
+    if (!res.ok) {
+      if (d.dos) triggerDuress()
+      return
+    }
     setNotes(n => n.filter(x => x.id !== id))
     if (activeNote?.id === id) resetNoteEditor()
   }
@@ -204,13 +268,13 @@ export default function Home() {
     setUnlockPhase('locked'); setUnlockPw(''); setUnlockError('')
     setDecryptedContent(''); setPendingDuress(false)
     setIsProtecting(false); setNotePassword(''); setNoteDuressPassword(''); setNoteDecoyContent('')
-    setNoteViewMode('preview')
+    setNoteViewMode('preview'); setNoteError('')
   }
 
   function openNote(note: Note) {
     setActiveNote(note); setNoteTitle(note.title)
     setUnlockPhase('locked'); setUnlockPw(''); setUnlockError(''); setPendingDuress(false)
-    setNoteViewMode('preview')
+    setNoteViewMode('preview'); setNoteError('')
     if (!note.is_protected) { setNoteContent(note.content) }
     else { setNoteContent(''); setDecryptedContent('') }
   }
@@ -235,19 +299,68 @@ export default function Home() {
   }
 
   function handleViewNote() {
-    if (pendingDuress) {
-      window.open(window.location.href, '_blank')
-      triggerDuress()
-    }
+    if (pendingDuress) { window.open(window.location.href, '_blank'); triggerDuress() }
     setNoteContent(decryptedContent)
   }
 
   const inp = { padding: '0.5rem 0.75rem', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg)', fontFamily: 'inherit', fontSize: '0.875rem' } as React.CSSProperties
 
+  // Warning overlay
+  if (showWarning) {
+    return (
+      <main style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', maxWidth: 480, margin: '0 auto', padding: '2rem', gap: '1.25rem', textAlign: 'center' }}>
+        <h1 style={{ fontSize: 'clamp(1.25rem, 3vw, 1.75rem)', fontWeight: 700, letterSpacing: '-0.02em' }}>notechat</h1>
+        <div style={{ padding: '1.25rem', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <p style={{ fontWeight: 600, fontSize: '0.95rem' }}>before you continue</p>
+          <p style={{ fontSize: '0.85rem', color: 'var(--muted)', lineHeight: 1.6 }}>this is a shared space. notes and messages are visible to everyone. don&apos;t post anything private or harmful. vandalism will get you auto-banned.</p>
+          <p style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>continuing in a moment...</p>
+        </div>
+        <button onClick={() => { setCookieClient('visited', '1'); setShowWarning(false) }}
+          style={{ padding: '0.5rem 1.5rem', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontSize: '0.875rem', cursor: 'pointer' }}>
+          got it
+        </button>
+      </main>
+    )
+  }
+
+  // Claim username modal
+  if (claimPrompt) {
+    return (
+      <main style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', maxWidth: 400, margin: '0 auto', padding: '2rem', gap: '1rem' }}>
+        <h2 style={{ fontWeight: 700, fontSize: '1.1rem', letterSpacing: '-0.01em' }}>pick a username to edit notes</h2>
+        <p style={{ fontSize: '0.82rem', color: 'var(--muted)', textAlign: 'center' }}>this gets saved to your device. you&apos;ll use it automatically next time.</p>
+        <input
+          value={claimInput}
+          onChange={e => setClaimInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && claimUsername(claimInput)}
+          placeholder="username"
+          style={{ ...inp, width: '100%' }}
+          autoFocus
+        />
+        {claimError && <p style={{ fontSize: '0.8rem', color: 'var(--error)' }}>{claimError}</p>}
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button onClick={() => { setClaimPrompt(false); setClaimError('') }}
+            style={{ padding: '0.4rem 1rem', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg)', fontFamily: 'inherit', fontSize: '0.875rem', cursor: 'pointer' }}>cancel</button>
+          <button onClick={() => claimUsername(claimInput)}
+            style={{ padding: '0.4rem 1.25rem', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontSize: '0.875rem', cursor: 'pointer' }}>claim</button>
+        </div>
+      </main>
+    )
+  }
+
   return (
     <main style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', maxWidth: 760, margin: '0 auto', padding: '1rem' }}>
       <header style={{ marginBottom: '1.5rem' }}>
-        <h1 style={{ fontSize: 'clamp(1.25rem, 3vw, 1.75rem)', fontWeight: 700, letterSpacing: '-0.02em', marginBottom: '0.75rem' }}>notechat</h1>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <h1 style={{ fontSize: 'clamp(1.25rem, 3vw, 1.75rem)', fontWeight: 700, letterSpacing: '-0.02em' }}>notechat</h1>
+          {editUser && (
+            <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
+              editing as <span style={{ color: 'var(--fg)' }}>{editUser}</span>
+              <button onClick={() => { setClaimInput(editUser); setClaimPrompt(true) }}
+                style={{ marginLeft: '0.4rem', background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '0.75rem', fontFamily: 'inherit', padding: 0 }}>change</button>
+            </span>
+          )}
+        </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           {(['chat', 'notes'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} style={{ padding: '0.35rem 1rem', borderRadius: 6, border: '1px solid var(--border)', background: tab === t ? 'var(--fg)' : 'transparent', color: tab === t ? 'var(--bg)' : 'var(--fg)', cursor: 'pointer', fontSize: '0.875rem', fontFamily: 'inherit', transition: 'all 150ms' }}>{t}</button>
@@ -330,11 +443,20 @@ export default function Home() {
                   </div>
                 ) : (
                   <textarea value={noteContent} onChange={e => setNoteContent(e.target.value)} placeholder="write something... paste image urls to embed" rows={12}
-                    style={{ ...inp, resize: 'vertical', lineHeight: 1.6 }}
-                  />
+                    style={{ ...inp, resize: 'vertical', lineHeight: 1.6 }} />
                 )}
               </>
             ) : null}
+
+            {/* author line */}
+            {activeNote && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.15rem' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                  {activeNote.author ? <>by <span style={{ color: 'var(--fg)' }}>{activeNote.author}</span></> : 'anonymous'}
+                  {' · '}{timeAgo(activeNote.updated_at)}
+                </span>
+              </div>
+            )}
 
             {!activeNote?.is_protected && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -352,6 +474,8 @@ export default function Home() {
                 <textarea value={noteDecoyContent} onChange={e => setNoteDecoyContent(e.target.value)} placeholder="decoy content" rows={3} style={{ ...inp, resize: 'vertical', lineHeight: 1.5 }} />
               </div>
             )}
+
+            {noteError && <p style={{ fontSize: '0.8rem', color: 'var(--error)' }}>{noteError}</p>}
 
             <button onClick={saveNote} disabled={savingNote} style={{ alignSelf: 'flex-end', padding: '0.4rem 1.25rem', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontSize: '0.875rem', cursor: 'pointer', opacity: savingNote ? 0.6 : 1 }}>
               {savingNote ? 'saving...' : 'save'}
