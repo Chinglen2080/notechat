@@ -1,6 +1,8 @@
 import type { Metadata } from 'next'
 import { SpeedInsights } from '@vercel/speed-insights/next'
+import { Analytics } from '@vercel/analytics/next'
 import CssGate from './css-gate'
+import TrackingGate from './tracking-gate'
 
 export const metadata: Metadata = {
   title: 'NoteChat',
@@ -16,7 +18,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <CssGate>{children}</CssGate>
-        <SpeedInsights />
+        <TrackingGate>
+          <Analytics />
+          <SpeedInsights />
+        </TrackingGate>
       </body>
     </html>
   )
