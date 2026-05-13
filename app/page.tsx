@@ -64,6 +64,7 @@ export default function Home() {
   const [username, setUsername] = useState('')
   const [msgInput, setMsgInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const [notes, setNotes] = useState<Note[]>([])
   const [activeNote, setActiveNote] = useState<Note | null>(null)
@@ -100,7 +101,19 @@ export default function Home() {
     e.preventDefault()
     if (!username.trim() || !msgInput.trim() || sending) return
     setSending(true)
-    await fetch('/api/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, content: msgInput }) })
+    setSendError('')
+    const res = await fetch('/api/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, content: msgInput }),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      if (data.dos) triggerDuress()
+      setSendError(data.error || 'failed to send')
+      setSending(false)
+      return
+    }
     setMsgInput('')
     const d = await fetch('/api/messages').then(r => r.json())
     if (Array.isArray(d)) setMessages(d)
@@ -215,6 +228,7 @@ export default function Home() {
               <input value={msgInput} onChange={e => setMsgInput(e.target.value)} placeholder="message..." style={{ ...inp, flex: 1 }} />
               <button type="submit" disabled={sending} style={{ padding: '0.5rem 1.25rem', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontSize: '0.875rem', cursor: 'pointer', opacity: sending ? 0.6 : 1 }}>send</button>
             </div>
+            {sendError && <p style={{ fontSize: '0.8rem', color: 'var(--error)' }}>{sendError}</p>}
           </form>
         </section>
       )}
