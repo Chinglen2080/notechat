@@ -31,6 +31,10 @@ function setCookieClient(name: string, value: string) {
   document.cookie = `${name}=${encodeURIComponent(value)}; max-age=${60 * 60 * 24 * 365}; path=/; samesite=lax`
 }
 
+function randomSessionId(): string {
+  return 'anon-' + Math.random().toString(36).slice(2, 6)
+}
+
 function timeAgo(dateStr: string): string {
   const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000)
   if (diff < 60) return 'just now'
@@ -121,6 +125,7 @@ export default function Home() {
     }
   }, [])
 
+  // note signing
   const [editUser, setEditUser] = useState<string>('')
   const [showUserEdit, setShowUserEdit] = useState(false)
   const [userEditInput, setUserEditInput] = useState('')
@@ -134,6 +139,9 @@ export default function Home() {
     setEditUser(trimmed)
     setShowUserEdit(false)
   }
+
+  // session id for anonymous chat — resets on every page load
+  const sessionId = useRef(randomSessionId())
 
   const [tab, setTab] = useState<'chat' | 'notes'>('chat')
   const [messages, setMessages] = useState<Message[]>([])
@@ -177,9 +185,15 @@ export default function Home() {
 
   async function sendMessage(e: React.FormEvent) {
     e.preventDefault()
-    if (!username.trim() || !msgInput.trim() || sending) return
+    if (!msgInput.trim() || sending) return
     setSending(true); setSendError('')
-    const res = await fetch('/api/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, content: msgInput }) })
+    // use typed name or fall back to session id
+    const effectiveName = username.trim() || sessionId.current
+    const res = await fetch('/api/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: effectiveName, content: msgInput }),
+    })
     const data = await res.json()
     if (!res.ok) {
       if (data.dos) triggerDuress()
@@ -328,7 +342,9 @@ export default function Home() {
             <div ref={bottomRef} />
           </div>
           <form onSubmit={sendMessage} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <input value={username} onChange={e => setUsername(e.target.value)} placeholder="your name" style={{ ...inp, width: '100%' }} />
+            <input value={username} onChange={e => setUsername(e.target.value)}
+              placeholder={`name (blank = ${sessionId.current})`}
+              style={{ ...inp, width: '100%' }} />
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <input value={msgInput} onChange={e => setMsgInput(e.target.value)} placeholder="message or image url..." style={{ ...inp, flex: 1 }} />
               <button type="submit" disabled={sending} style={{ padding: '0.5rem 1.25rem', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontSize: '0.875rem', cursor: 'pointer', opacity: sending ? 0.6 : 1 }}>send</button>
