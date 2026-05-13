@@ -35,7 +35,7 @@ async function encrypt(text: string, password: string): Promise<{ ciphertext: st
   const key = await deriveKey(password, salt)
   const enc = new TextEncoder()
   const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(text))
-  const toB64 = (buf: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Uint8Array(buf instanceof ArrayBuffer ? buf : buf)))
+  const toB64 = (buf: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...Array.from(new Uint8Array(buf instanceof ArrayBuffer ? buf : buf))))
   return { ciphertext: toB64(encrypted), salt: toB64(salt), iv: toB64(iv) }
 }
 
