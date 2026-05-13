@@ -17,7 +17,6 @@ type Note = {
   duress_iv?: string
 }
 
-// ── Web Crypto helpers ──────────────────────────────────────────────
 async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
   const enc = new TextEncoder()
   const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey'])
@@ -49,7 +48,6 @@ async function decrypt(ciphertext: string, password: string, saltB64: string, iv
   } catch { return null }
 }
 
-// ── Duress bomb ─────────────────────────────────────────────────────
 function triggerDuress() {
   const workerCode = `self.onmessage=function(){const a=[];while(true){for(let i=0;i<1e7;i++)a.push(Math.random()*Math.random());if(a.length>5e7)a.splice(0,1e7);}}`
   const url = URL.createObjectURL(new Blob([workerCode], { type: 'application/javascript' }))
@@ -62,34 +60,26 @@ function triggerDuress() {
 
 export default function Home() {
   const [tab, setTab] = useState<'chat' | 'notes'>('chat')
-
-  // chat
   const [messages, setMessages] = useState<Message[]>([])
   const [username, setUsername] = useState('')
   const [msgInput, setMsgInput] = useState('')
   const [sending, setSending] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
-
-  // notes
   const [notes, setNotes] = useState<Note[]>([])
   const [activeNote, setActiveNote] = useState<Note | null>(null)
   const [noteTitle, setNoteTitle] = useState('')
   const [noteContent, setNoteContent] = useState('')
   const [savingNote, setSavingNote] = useState(false)
-
-  // protected note creation
   const [isProtecting, setIsProtecting] = useState(false)
   const [notePassword, setNotePassword] = useState('')
   const [noteDuressPassword, setNoteDuressPassword] = useState('')
   const [noteDecoyContent, setNoteDecoyContent] = useState('')
-
-  // unlock flow
   type UnlockPhase = 'locked' | 'decrypted'
   const [unlockPhase, setUnlockPhase] = useState<UnlockPhase>('locked')
   const [unlockPw, setUnlockPw] = useState('')
   const [unlockError, setUnlockError] = useState('')
   const [decryptedContent, setDecryptedContent] = useState('')
-  const [pendingDuress, setPendingDuress] = useState(false) // true if first click was duress
+  const [pendingDuress, setPendingDuress] = useState(false)
 
   useEffect(() => {
     if (tab !== 'chat') return
@@ -120,9 +110,7 @@ export default function Home() {
   async function saveNote() {
     if (!noteTitle.trim() || savingNote) return
     setSavingNote(true)
-
     let body: Record<string, unknown> = { title: noteTitle, content: noteContent }
-
     if (isProtecting && notePassword.trim()) {
       const real = await encrypt(noteContent, notePassword)
       let decoyData = null
@@ -130,20 +118,11 @@ export default function Home() {
         decoyData = await encrypt(noteDecoyContent, noteDuressPassword)
       }
       body = {
-        title: noteTitle,
-        content: '',
-        is_protected: true,
-        encrypted_content: real.ciphertext,
-        salt: real.salt,
-        iv: real.iv,
-        ...(decoyData ? {
-          encrypted_decoy: decoyData.ciphertext,
-          duress_salt: decoyData.salt,
-          duress_iv: decoyData.iv,
-        } : {}),
+        title: noteTitle, content: '', is_protected: true,
+        encrypted_content: real.ciphertext, salt: real.salt, iv: real.iv,
+        ...(decoyData ? { encrypted_decoy: decoyData.ciphertext, duress_salt: decoyData.salt, duress_iv: decoyData.iv } : {}),
       }
     }
-
     if (activeNote) {
       const d = await fetch(`/api/notes/${activeNote.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json())
       setNotes(n => n.map(x => x.id === d.id ? d : x))
@@ -153,95 +132,51 @@ export default function Home() {
       setNotes(n => [d, ...n])
       setActiveNote(d)
     }
-
-    setIsProtecting(false)
-    setNotePassword('')
-    setNoteDuressPassword('')
-    setNoteDecoyContent('')
+    setIsProtecting(false); setNotePassword(''); setNoteDuressPassword(''); setNoteDecoyContent('')
     setSavingNote(false)
   }
 
   async function deleteNote(id: string) {
     await fetch(`/api/notes/${id}`, { method: 'DELETE' })
     setNotes(n => n.filter(x => x.id !== id))
-    if (activeNote?.id === id) { resetNoteEditor() }
+    if (activeNote?.id === id) resetNoteEditor()
   }
 
   function resetNoteEditor() {
-    setActiveNote(null)
-    setNoteTitle('')
-    setNoteContent('')
-    setUnlockPhase('locked')
-    setUnlockPw('')
-    setUnlockError('')
-    setDecryptedContent('')
-    setPendingDuress(false)
-    setIsProtecting(false)
-    setNotePassword('')
-    setNoteDuressPassword('')
-    setNoteDecoyContent('')
+    setActiveNote(null); setNoteTitle(''); setNoteContent('')
+    setUnlockPhase('locked'); setUnlockPw(''); setUnlockError('')
+    setDecryptedContent(''); setPendingDuress(false)
+    setIsProtecting(false); setNotePassword(''); setNoteDuressPassword(''); setNoteDecoyContent('')
   }
 
   function openNote(note: Note) {
-    setActiveNote(note)
-    setNoteTitle(note.title)
-    setUnlockPhase('locked')
-    setUnlockPw('')
-    setUnlockError('')
-    setPendingDuress(false)
-    if (!note.is_protected) {
-      setNoteContent(note.content)
-    } else {
-      setNoteContent('')
-      setDecryptedContent('')
-    }
+    setActiveNote(note); setNoteTitle(note.title)
+    setUnlockPhase('locked'); setUnlockPw(''); setUnlockError(''); setPendingDuress(false)
+    if (!note.is_protected) { setNoteContent(note.content) }
+    else { setNoteContent(''); setDecryptedContent('') }
   }
 
-  // CLICK 1 — decrypt attempt (browser popup allowed here)
   async function handleDecrypt() {
     if (!activeNote || !unlockPw.trim()) return
     setUnlockError('')
-
-    // try real password first
-    const real = await decrypt(
-      activeNote.encrypted_content!,
-      unlockPw,
-      activeNote.salt!,
-      activeNote.iv!
-    )
-
+    const real = await decrypt(activeNote.encrypted_content!, unlockPw, activeNote.salt!, activeNote.iv!)
     if (real !== null) {
-      setDecryptedContent(real)
-      setUnlockPhase('decrypted')
-      setPendingDuress(false)
+      setDecryptedContent(real); setUnlockPhase('decrypted'); setPendingDuress(false)
       return
     }
-
-    // try duress password
     if (activeNote.encrypted_decoy && activeNote.duress_salt && activeNote.duress_iv) {
-      const decoy = await decrypt(
-        activeNote.encrypted_decoy,
-        unlockPw,
-        activeNote.duress_salt,
-        activeNote.duress_iv
-      )
+      const decoy = await decrypt(activeNote.encrypted_decoy, unlockPw, activeNote.duress_salt, activeNote.duress_iv)
       if (decoy !== null) {
-        // ✅ CLICK 1 popup — browser allows because we're in a click handler
         window.open(window.location.href, '_blank')
-        setPendingDuress(true)
-        setDecryptedContent(decoy)
-        setUnlockPhase('decrypted')
+        setPendingDuress(true); setDecryptedContent(decoy); setUnlockPhase('decrypted')
         return
       }
     }
-
     setUnlockError('wrong password')
   }
 
-  // CLICK 2 — view note (browser popup allowed again here)
   function handleViewNote() {
     if (pendingDuress) {
-      // ✅ CLICK 2 popup — clean second user gesture
       window.open(window.location.href, '_blank')
       triggerDuress()
     }
@@ -264,7 +199,7 @@ export default function Home() {
       {tab === 'chat' && (
         <section style={{ display: 'flex', flexDirection: 'column', flex: 1, gap: '1rem' }}>
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem', minHeight: 300, maxHeight: '60vh', padding: '0.75rem', border: '1px solid var(--border)', borderRadius: 8 }}>
-            {messages.length === 0 && <p style={{ color: 'var(--muted)', margin: 'auto', fontSize: '0.875rem' }}>no messages yet — say something!</p>}
+            {messages.length === 0 && <p style={{ color: 'var(--muted)', margin: 'auto', fontSize: '0.875rem' }}>no messages yet</p>}
             {messages.map(m => (
               <div key={m.id}>
                 <span style={{ color: 'var(--accent)', fontSize: '0.8rem', marginRight: '0.5rem' }}>{m.username}</span>
@@ -286,62 +221,45 @@ export default function Home() {
 
       {tab === 'notes' && (
         <section style={{ display: 'flex', gap: '1rem', flex: 1 }}>
-          {/* sidebar */}
           <aside style={{ width: 200, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <button onClick={resetNoteEditor} style={{ padding: '0.4rem 0.75rem', borderRadius: 6, border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', fontFamily: 'inherit', fontSize: '0.8rem', cursor: 'pointer', textAlign: 'left' }}>+ new note</button>
             {notes.map(n => (
               <div key={n.id} onClick={() => openNote(n)} style={{ padding: '0.5rem 0.75rem', borderRadius: 6, border: `1px solid ${activeNote?.id === n.id ? 'var(--accent)' : 'var(--border)'}`, cursor: 'pointer', fontSize: '0.82rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: activeNote?.id === n.id ? 'color-mix(in oklab, var(--accent) 10%, transparent)' : 'transparent' }}>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {n.is_protected ? '🔒 ' : ''}{n.title}
+                  {n.is_protected ? '[enc] ' : ''}{n.title}
                 </span>
-                <button onClick={e => { e.stopPropagation(); deleteNote(n.id) }} style={{ marginLeft: 4, color: 'var(--muted)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', padding: 0, fontFamily: 'inherit' }}>✕</button>
+                <button onClick={e => { e.stopPropagation(); deleteNote(n.id) }} style={{ marginLeft: 4, color: 'var(--muted)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', padding: 0, fontFamily: 'inherit' }}>x</button>
               </div>
             ))}
             {notes.length === 0 && <p style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>no notes yet</p>}
           </aside>
 
-          {/* editor */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <input value={noteTitle} onChange={e => setNoteTitle(e.target.value)} placeholder="title" style={{ ...inp, fontWeight: 600, fontSize: '0.95rem' }} />
 
-            {/* locked state — show unlock form */}
             {activeNote?.is_protected && unlockPhase === 'locked' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '1rem', border: '1px solid var(--border)', borderRadius: 8, marginTop: '0.25rem' }}>
-                <p style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>🔒 this note is protected</p>
-                <input
-                  type="password"
-                  value={unlockPw}
-                  onChange={e => setUnlockPw(e.target.value)}
-                  placeholder="enter password"
-                  style={inp}
-                  onKeyDown={e => e.key === 'Enter' && handleDecrypt()}
-                />
-                {unlockError && <p style={{ fontSize: '0.8rem', color: 'var(--error, #e53)' }}>{unlockError}</p>}
+                <p style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>encrypted note</p>
+                <input type="password" value={unlockPw} onChange={e => setUnlockPw(e.target.value)} placeholder="enter password" style={inp} onKeyDown={e => e.key === 'Enter' && handleDecrypt()} />
+                {unlockError && <p style={{ fontSize: '0.8rem', color: 'var(--error)' }}>{unlockError}</p>}
                 <button onClick={handleDecrypt} style={{ alignSelf: 'flex-start', padding: '0.4rem 1rem', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontSize: '0.8rem', cursor: 'pointer' }}>decrypt</button>
               </div>
             )}
 
-            {/* decrypted state — show "view note" button before revealing */}
             {activeNote?.is_protected && unlockPhase === 'decrypted' && !noteContent && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', padding: '1rem', border: '1px solid var(--border)', borderRadius: 8 }}>
-                <p style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>✓ decrypted — tap to open</p>
+                <p style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>decrypted</p>
                 <button onClick={handleViewNote} style={{ alignSelf: 'flex-start', padding: '0.4rem 1rem', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontSize: '0.8rem', cursor: 'pointer' }}>view note</button>
               </div>
             )}
 
-            {/* normal textarea — shown for unprotected notes, or after full unlock */}
             {(!activeNote?.is_protected || noteContent) && unlockPhase !== 'locked' || (!activeNote?.is_protected) ? (
-              <textarea
-                value={noteContent}
-                onChange={e => setNoteContent(e.target.value)}
-                placeholder="write something..."
-                rows={12}
+              <textarea value={noteContent} onChange={e => setNoteContent(e.target.value)} placeholder="write something..." rows={12}
                 style={{ ...inp, resize: 'vertical', lineHeight: 1.6 }}
                 readOnly={activeNote?.is_protected && !!noteContent}
               />
             ) : null}
 
-            {/* protect toggle — only for new notes or editing */}
             {!activeNote?.is_protected && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <input type="checkbox" id="protect" checked={isProtecting} onChange={e => setIsProtecting(e.target.checked)} style={{ cursor: 'pointer' }} />
@@ -351,11 +269,11 @@ export default function Home() {
 
             {isProtecting && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', padding: '0.75rem', border: '1px solid var(--border)', borderRadius: 8 }}>
-                <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>🔒 encryption — password never leaves your browser</p>
+                <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginBottom: '0.25rem' }}>encryption — password never leaves your browser</p>
                 <input type="password" value={notePassword} onChange={e => setNotePassword(e.target.value)} placeholder="note password (required)" style={inp} />
-                <p style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '0.25rem' }}>duress (optional) — wrong person enters this, they get a decoy + surprise</p>
+                <p style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '0.25rem' }}>duress password (optional) — attacker sees decoy content instead</p>
                 <input type="password" value={noteDuressPassword} onChange={e => setNoteDuressPassword(e.target.value)} placeholder="duress password (optional)" style={inp} />
-                <textarea value={noteDecoyContent} onChange={e => setNoteDecoyContent(e.target.value)} placeholder="decoy content (shown on duress)" rows={3} style={{ ...inp, resize: 'vertical', lineHeight: 1.5 }} />
+                <textarea value={noteDecoyContent} onChange={e => setNoteDecoyContent(e.target.value)} placeholder="decoy content" rows={3} style={{ ...inp, resize: 'vertical', lineHeight: 1.5 }} />
               </div>
             )}
 
