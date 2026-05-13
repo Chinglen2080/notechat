@@ -45,6 +45,8 @@ export default function AdminPage() {
   const [newDuress, setNewDuress] = useState('')
   const [feedback, setFeedback] = useState('')
   const [activeTab, setActiveTab] = useState<'stats' | 'messages' | 'bans' | 'passwords'>('stats')
+  const [lockdown, setLockdown] = useState<boolean | null>(null)
+  const [lockdownLoading, setLockdownLoading] = useState(false)
 
   const loadStats = useCallback(async (token: string) => {
     const d = await fetch(`/api/admin/stats?token=${token}`).then(r => r.json())
@@ -52,6 +54,11 @@ export default function AdminPage() {
       setStats(d)
       setBannedUsers(d.bannedUsers)
     }
+  }, [])
+
+  const loadLockdown = useCallback(async (token: string) => {
+    const d = await fetch(`/api/admin/lockdown?token=${token}`).then(r => r.json())
+    if (!d.error) setLockdown(d.lockdown)
   }, [])
 
   const loadMessages = useCallback(async (token: string) => {
@@ -97,13 +104,14 @@ export default function AdminPage() {
       setStats({ messageCount: 0, noteCount: 0, bannedUsers: [], duressEvents: [] })
       setBannedUsers([])
       setMessages([])
+      setLockdown(false)
       setPhase('admin')
       return
     }
 
     if (res.requiresChange) { setPhase('change-password'); return }
 
-    await loadStats(token)
+    await Promise.all([loadStats(token), loadLockdown(token)])
     setPhase('admin')
   }
 
@@ -132,6 +140,25 @@ export default function AdminPage() {
       loadStats(sessionToken)
       if (target === 'messages') { setMessages(null); loadMessages(sessionToken) }
     } else setFeedback(res.error)
+  }
+
+  async function toggleLockdown() {
+    if (lockdown === null) return
+    const next = !lockdown
+    if (next && !confirm('Enable lockdown? No one will be able to send messages.')) return
+    setLockdownLoading(true)
+    const res = await fetch('/api/admin/lockdown', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminToken: sessionToken, enable: next }),
+    }).then(r => r.json())
+    if (res.ok) {
+      setLockdown(next)
+      setFeedback(next ? 'Lockdown enabled — chat is frozen.' : 'Lockdown lifted.')
+    } else {
+      setFeedback(res.error || 'Lockdown toggle failed')
+    }
+    setLockdownLoading(false)
   }
 
   async function deleteMessage(id: string) {
@@ -208,11 +235,39 @@ export default function AdminPage() {
   return (
     <main style={{ maxWidth: 900, margin: '0 auto', padding: '1.5rem 1rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <h1 style={{ fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.02em' }}>admin panel</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <h1 style={{ fontSize: '1.25rem', fontWeight: 700, letterSpacing: '-0.02em' }}>admin panel</h1>
+          {lockdown !== null && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <div style={{
+                width: 8, height: 8, borderRadius: '50%',
+                background: lockdown ? 'var(--error)' : 'var(--accent)',
+                boxShadow: lockdown ? '0 0 6px var(--error)' : '0 0 6px var(--accent)'
+              }} />
+              <span style={{ fontSize: '0.75rem', color: lockdown ? 'var(--error)' : 'var(--muted)' }}>
+                {lockdown ? 'lockdown active' : 'chat open'}
+              </span>
+              <button
+                onClick={toggleLockdown}
+                disabled={lockdownLoading}
+                style={{
+                  padding: '0.25rem 0.75rem', borderRadius: 6, fontSize: '0.75rem',
+                  border: lockdown ? '1px solid var(--accent)' : '1px solid var(--error)',
+                  background: 'transparent',
+                  color: lockdown ? 'var(--accent)' : 'var(--error)',
+                  fontFamily: 'inherit', cursor: 'pointer',
+                  opacity: lockdownLoading ? 0.5 : 1
+                }}
+              >
+                {lockdownLoading ? '...' : lockdown ? 'lift lockdown' : 'lockdown'}
+              </button>
+            </div>
+          )}
+        </div>
         <a href="/" style={{ fontSize: '0.8rem', color: 'var(--muted)', textDecoration: 'none' }}>← back</a>
       </div>
 
-      {feedback && <div style={{ marginBottom: '1rem', padding: '0.5rem 0.75rem', borderRadius: 6, border: '1px solid var(--accent)', fontSize: '0.8rem', color: 'var(--accent)' }}>{feedback}</div>}
+      {feedback && <div style={{ marginBottom: '1rem', padding: '0.5rem 0.75rem', borderRadius: 6, border: `1px solid ${feedback.includes('ockdown') && lockdown ? 'var(--error)' : 'var(--accent)'}`, fontSize: '0.8rem', color: feedback.includes('ockdown') && lockdown ? 'var(--error)' : 'var(--accent)' }}>{feedback}</div>}
 
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
         {(['stats', 'messages', 'bans', 'passwords'] as const).map(t => (
@@ -236,7 +291,7 @@ export default function AdminPage() {
           </div>
           {stats.duressEvents.length > 0 && (
             <div>
-              <p style={{ fontSize: '0.8rem', color: 'var(--error)', marginBottom: '0.5rem' }}>⚠ duress events</p>
+              <p style={{ fontSize: '0.8rem', color: 'var(--error)', marginBottom: '0.5rem' }}>duress events</p>
               {stats.duressEvents.map(ev => (
                 <div key={ev.id} style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>{new Date(ev.triggered_at).toLocaleString()} — {ev.resolved ? 'resolved' : 'active'}</div>
               ))}

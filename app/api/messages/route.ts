@@ -2,9 +2,10 @@ import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 
 function getSupabase() {
+  // Use service role key so RLS doesn't block ban/lockdown reads
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
   )
 }
 
@@ -15,6 +16,15 @@ async function isBanned(supabase: ReturnType<typeof getSupabase>, username: stri
     .eq('username', username.toLowerCase())
     .limit(1)
   return !!data && data.length > 0
+}
+
+async function isLockedDown(supabase: ReturnType<typeof getSupabase>): Promise<boolean> {
+  const { data } = await supabase
+    .from('app_settings')
+    .select('value')
+    .eq('key', 'lockdown')
+    .limit(1)
+  return !!data && data.length > 0 && data[0].value === 'true'
 }
 
 export async function GET() {
@@ -33,6 +43,8 @@ export async function POST(req: Request) {
   const { username, content } = await req.json()
   if (!username?.trim() || !content?.trim())
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
+  if (await isLockedDown(supabase))
+    return NextResponse.json({ error: 'Chat is locked down. No new messages allowed.' }, { status: 403 })
   if (await isBanned(supabase, username))
     return NextResponse.json({ error: 'You are banned.' }, { status: 403 })
   const { data, error } = await supabase
