@@ -273,7 +273,7 @@ export default function Home() {
           <form onSubmit={sendMessage} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <input value={username} onChange={e => setUsername(e.target.value)} placeholder="your name" style={{ ...inp, width: '100%' }} />
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <input value={msgInput} onChange={e => setMsgInput(e.target.value)} placeholder="message or image url..." style={{ ...inp, flex: 1 }} />
+              <input value={msgInput} onChange={e => setMsgInput(e.target.value)} placeholder="message" style={{ ...inp, flex: 1 }} />
               <button type="submit" disabled={sending} style={{ padding: '0.5rem 1.25rem', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontSize: '0.875rem', cursor: 'pointer', opacity: sending ? 0.6 : 1 }}>send</button>
             </div>
             {sendError && <p style={{ fontSize: '0.8rem', color: 'var(--error)' }}>{sendError}</p>}
