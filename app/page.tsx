@@ -17,6 +17,49 @@ type Note = {
   duress_iv?: string
 }
 
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|avif)(\?.*)?$/i
+const URL_RE = /https?:\/\/[^\s]+/g
+
+function renderContent(text: string) {
+  const parts: React.ReactNode[] = []
+  let last = 0
+  let match: RegExpExecArray | null
+  URL_RE.lastIndex = 0
+  while ((match = URL_RE.exec(text)) !== null) {
+    const url = match[0]
+    if (match.index > last) parts.push(text.slice(last, match.index))
+    if (IMAGE_EXT.test(url)) {
+      parts.push(
+        <img
+          key={match.index}
+          src={url}
+          alt="embed"
+          loading="lazy"
+          style={{ display: 'block', maxWidth: '100%', maxHeight: 320, borderRadius: 6, marginTop: '0.35rem', cursor: 'pointer' }}
+          onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
+        />
+      )
+    } else {
+      parts.push(
+        <a key={match.index} href={url} target="_blank" rel="noopener noreferrer"
+          style={{ color: 'var(--accent)', wordBreak: 'break-all' }}>
+          {url}
+        </a>
+      )
+    }
+    last = match.index + url.length
+  }
+  if (last < text.length) parts.push(text.slice(last))
+  return parts
+}
+
+function renderNoteContent(text: string) {
+  return text.split('\n').map((line, i) => {
+    const nodes = renderContent(line)
+    return <span key={i} style={{ display: 'block' }}>{nodes.length ? nodes : '\u200b'}</span>
+  })
+}
+
 async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
   const enc = new TextEncoder()
   const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey'])
@@ -81,6 +124,7 @@ export default function Home() {
   const [unlockError, setUnlockError] = useState('')
   const [decryptedContent, setDecryptedContent] = useState('')
   const [pendingDuress, setPendingDuress] = useState(false)
+  const [noteViewMode, setNoteViewMode] = useState<'edit' | 'preview'>('edit')
 
   useEffect(() => {
     if (tab !== 'chat') return
@@ -160,11 +204,13 @@ export default function Home() {
     setUnlockPhase('locked'); setUnlockPw(''); setUnlockError('')
     setDecryptedContent(''); setPendingDuress(false)
     setIsProtecting(false); setNotePassword(''); setNoteDuressPassword(''); setNoteDecoyContent('')
+    setNoteViewMode('edit')
   }
 
   function openNote(note: Note) {
     setActiveNote(note); setNoteTitle(note.title)
     setUnlockPhase('locked'); setUnlockPw(''); setUnlockError(''); setPendingDuress(false)
+    setNoteViewMode('edit')
     if (!note.is_protected) { setNoteContent(note.content) }
     else { setNoteContent(''); setDecryptedContent('') }
   }
@@ -215,9 +261,11 @@ export default function Home() {
             {messages.length === 0 && <p style={{ color: 'var(--muted)', margin: 'auto', fontSize: '0.875rem' }}>no messages yet</p>}
             {messages.map(m => (
               <div key={m.id}>
-                <span style={{ color: 'var(--accent)', fontSize: '0.8rem', marginRight: '0.5rem' }}>{m.username}</span>
-                <span style={{ fontSize: '0.9rem' }}>{m.content}</span>
-                <span style={{ color: 'var(--muted)', fontSize: '0.72rem', marginLeft: '0.5rem' }}>{new Date(m.created_at).toLocaleTimeString()}</span>
+                <div>
+                  <span style={{ color: 'var(--accent)', fontSize: '0.8rem', marginRight: '0.5rem' }}>{m.username}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: '0.72rem' }}>{new Date(m.created_at).toLocaleTimeString()}</span>
+                </div>
+                <div style={{ fontSize: '0.9rem', marginTop: '0.15rem' }}>{renderContent(m.content)}</div>
               </div>
             ))}
             <div ref={bottomRef} />
@@ -225,7 +273,7 @@ export default function Home() {
           <form onSubmit={sendMessage} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <input value={username} onChange={e => setUsername(e.target.value)} placeholder="your name" style={{ ...inp, width: '100%' }} />
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <input value={msgInput} onChange={e => setMsgInput(e.target.value)} placeholder="message..." style={{ ...inp, flex: 1 }} />
+              <input value={msgInput} onChange={e => setMsgInput(e.target.value)} placeholder="message or image url..." style={{ ...inp, flex: 1 }} />
               <button type="submit" disabled={sending} style={{ padding: '0.5rem 1.25rem', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontSize: '0.875rem', cursor: 'pointer', opacity: sending ? 0.6 : 1 }}>send</button>
             </div>
             {sendError && <p style={{ fontSize: '0.8rem', color: 'var(--error)' }}>{sendError}</p>}
@@ -268,10 +316,24 @@ export default function Home() {
             )}
 
             {(!activeNote?.is_protected || noteContent) && unlockPhase !== 'locked' || (!activeNote?.is_protected) ? (
-              <textarea value={noteContent} onChange={e => setNoteContent(e.target.value)} placeholder="write something..." rows={12}
-                style={{ ...inp, resize: 'vertical', lineHeight: 1.6 }}
-                readOnly={activeNote?.is_protected && !!noteContent}
-              />
+              <>
+                {!activeNote?.is_protected && (
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    {(['edit', 'preview'] as const).map(m => (
+                      <button key={m} onClick={() => setNoteViewMode(m)} style={{ padding: '0.2rem 0.7rem', borderRadius: 5, border: '1px solid var(--border)', background: noteViewMode === m ? 'var(--fg)' : 'transparent', color: noteViewMode === m ? 'var(--bg)' : 'var(--fg)', fontFamily: 'inherit', fontSize: '0.75rem', cursor: 'pointer' }}>{m}</button>
+                    ))}
+                  </div>
+                )}
+                {noteViewMode === 'preview' || (activeNote?.is_protected && !!noteContent) ? (
+                  <div style={{ ...inp, minHeight: 200, lineHeight: 1.7, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {renderNoteContent(noteContent)}
+                  </div>
+                ) : (
+                  <textarea value={noteContent} onChange={e => setNoteContent(e.target.value)} placeholder="write something... paste image urls to embed" rows={12}
+                    style={{ ...inp, resize: 'vertical', lineHeight: 1.6 }}
+                  />
+                )}
+              </>
             ) : null}
 
             {!activeNote?.is_protected && (
