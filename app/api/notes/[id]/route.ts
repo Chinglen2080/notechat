@@ -14,10 +14,22 @@ export async function PATCH(
 ) {
   const { id } = await params
   const supabase = getSupabase()
-  const { title, content } = await req.json()
+  const body = await req.json()
+  const { title, content, is_protected, encrypted_content, salt, iv, encrypted_decoy, duress_salt, duress_iv } = body
   const { data, error } = await supabase
     .from('notes')
-    .update({ title, content, updated_at: new Date().toISOString() })
+    .update({
+      title,
+      content: content || '',
+      updated_at: new Date().toISOString(),
+      is_protected: !!is_protected,
+      encrypted_content: encrypted_content || null,
+      salt: salt || null,
+      iv: iv || null,
+      encrypted_decoy: encrypted_decoy || null,
+      duress_salt: duress_salt || null,
+      duress_iv: duress_iv || null,
+    })
     .eq('id', id)
     .select()
     .single()
