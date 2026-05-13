@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function POST(req: NextRequest) {
   const { username } = await req.json()
-  if (!username?.trim()) return NextResponse.json({ error: 'username required' }, { status: 400 })
-  const res = NextResponse.json({ ok: true, username: username.trim() })
-  res.cookies.set('edit_user', username.trim(), {
+  const res = NextResponse.json({ ok: true, username: username?.trim() || '' })
+  res.cookies.set('edit_user', username?.trim() || '', {
     httpOnly: false,
     sameSite: 'lax',
     path: '/',

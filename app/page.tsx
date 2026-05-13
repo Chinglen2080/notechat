@@ -111,41 +111,28 @@ function triggerDuress() {
 }
 
 export default function Home() {
-  // warning page
   const [showWarning, setShowWarning] = useState(false)
 
   useEffect(() => {
     if (!getCookie('visited')) {
       setShowWarning(true)
-      const t = setTimeout(() => {
-        setCookieClient('visited', '1')
-        setShowWarning(false)
-      }, 5000)
+      const t = setTimeout(() => { setCookieClient('visited', '1'); setShowWarning(false) }, 5000)
       return () => clearTimeout(t)
     }
   }, [])
 
-  // auth
-  const [editUser, setEditUser] = useState<string | null>(null)
-  const [claimPrompt, setClaimPrompt] = useState(false)
-  const [claimInput, setClaimInput] = useState('')
-  const [claimError, setClaimError] = useState('')
+  const [editUser, setEditUser] = useState<string>('')
+  const [showUserEdit, setShowUserEdit] = useState(false)
+  const [userEditInput, setUserEditInput] = useState('')
 
-  useEffect(() => { setEditUser(getCookie('edit_user')) }, [])
+  useEffect(() => { setEditUser(getCookie('edit_user') || '') }, [])
 
-  async function claimUsername(name: string) {
-    if (!name.trim()) return
-    const res = await fetch('/api/auth/claim', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: name.trim() }),
-    })
-    if (res.ok) {
-      setEditUser(name.trim())
-      setClaimPrompt(false)
-      setClaimInput('')
-      setClaimError('')
-    }
+  function saveUsername(name: string) {
+    const trimmed = name.trim()
+    setCookieClient('edit_user', trimmed)
+    fetch('/api/auth/claim', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: trimmed }) })
+    setEditUser(trimmed)
+    setShowUserEdit(false)
   }
 
   const [tab, setTab] = useState<'chat' | 'notes'>('chat')
@@ -191,19 +178,13 @@ export default function Home() {
   async function sendMessage(e: React.FormEvent) {
     e.preventDefault()
     if (!username.trim() || !msgInput.trim() || sending) return
-    setSending(true)
-    setSendError('')
-    const res = await fetch('/api/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, content: msgInput }),
-    })
+    setSending(true); setSendError('')
+    const res = await fetch('/api/messages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, content: msgInput }) })
     const data = await res.json()
     if (!res.ok) {
       if (data.dos) triggerDuress()
       setSendError(data.error || 'failed to send')
-      setSending(false)
-      return
+      setSending(false); return
     }
     setMsgInput('')
     const d = await fetch('/api/messages').then(r => r.json())
@@ -214,7 +195,6 @@ export default function Home() {
   async function saveNote() {
     if (!noteTitle.trim() || savingNote) return
     setNoteError('')
-    if (!editUser) { setClaimPrompt(true); return }
     setSavingNote(true)
     let body: Record<string, unknown> = { title: noteTitle, content: noteContent }
     if (isProtecting && notePassword.trim()) {
@@ -235,30 +215,19 @@ export default function Home() {
     const d = await res.json()
     if (!res.ok) {
       if (d.dos) triggerDuress()
-      if (d.error === 'no_auth') setClaimPrompt(true)
-      else setNoteError(d.error || 'failed to save')
-      setSavingNote(false)
-      return
+      setNoteError(d.error || 'failed to save')
+      setSavingNote(false); return
     }
-    if (activeNote) {
-      setNotes(n => n.map(x => x.id === d.id ? d : x))
-      setActiveNote(d)
-    } else {
-      setNotes(n => [d, ...n])
-      setActiveNote(d)
-    }
+    if (activeNote) { setNotes(n => n.map(x => x.id === d.id ? d : x)); setActiveNote(d) }
+    else { setNotes(n => [d, ...n]); setActiveNote(d) }
     setIsProtecting(false); setNotePassword(''); setNoteDuressPassword(''); setNoteDecoyContent('')
     setSavingNote(false)
   }
 
   async function deleteNote(id: string) {
-    if (!editUser) { setClaimPrompt(true); return }
     const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' })
     const d = await res.json()
-    if (!res.ok) {
-      if (d.dos) triggerDuress()
-      return
-    }
+    if (!res.ok) { if (d.dos) triggerDuress(); return }
     setNotes(n => n.filter(x => x.id !== id))
     if (activeNote?.id === id) resetNoteEditor()
   }
@@ -275,7 +244,7 @@ export default function Home() {
     setActiveNote(note); setNoteTitle(note.title)
     setUnlockPhase('locked'); setUnlockPw(''); setUnlockError(''); setPendingDuress(false)
     setNoteViewMode('preview'); setNoteError('')
-    if (!note.is_protected) { setNoteContent(note.content) }
+    if (!note.is_protected) setNoteContent(note.content)
     else { setNoteContent(''); setDecryptedContent('') }
   }
 
@@ -283,17 +252,10 @@ export default function Home() {
     if (!activeNote || !unlockPw.trim()) return
     setUnlockError('')
     const real = await decrypt(activeNote.encrypted_content!, unlockPw, activeNote.salt!, activeNote.iv!)
-    if (real !== null) {
-      setDecryptedContent(real); setUnlockPhase('decrypted'); setPendingDuress(false)
-      return
-    }
+    if (real !== null) { setDecryptedContent(real); setUnlockPhase('decrypted'); setPendingDuress(false); return }
     if (activeNote.encrypted_decoy && activeNote.duress_salt && activeNote.duress_iv) {
       const decoy = await decrypt(activeNote.encrypted_decoy, unlockPw, activeNote.duress_salt, activeNote.duress_iv)
-      if (decoy !== null) {
-        window.open(window.location.href, '_blank')
-        setPendingDuress(true); setDecryptedContent(decoy); setUnlockPhase('decrypted')
-        return
-      }
+      if (decoy !== null) { window.open(window.location.href, '_blank'); setPendingDuress(true); setDecryptedContent(decoy); setUnlockPhase('decrypted'); return }
     }
     setUnlockError('wrong password')
   }
@@ -305,7 +267,6 @@ export default function Home() {
 
   const inp = { padding: '0.5rem 0.75rem', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg)', fontFamily: 'inherit', fontSize: '0.875rem' } as React.CSSProperties
 
-  // Warning overlay
   if (showWarning) {
     return (
       <main style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', maxWidth: 480, margin: '0 auto', padding: '2rem', gap: '1.25rem', textAlign: 'center' }}>
@@ -323,43 +284,26 @@ export default function Home() {
     )
   }
 
-  // Claim username modal
-  if (claimPrompt) {
-    return (
-      <main style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', maxWidth: 400, margin: '0 auto', padding: '2rem', gap: '1rem' }}>
-        <h2 style={{ fontWeight: 700, fontSize: '1.1rem', letterSpacing: '-0.01em' }}>pick a username to edit notes</h2>
-        <p style={{ fontSize: '0.82rem', color: 'var(--muted)', textAlign: 'center' }}>this gets saved to your device. you&apos;ll use it automatically next time.</p>
-        <input
-          value={claimInput}
-          onChange={e => setClaimInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && claimUsername(claimInput)}
-          placeholder="username"
-          style={{ ...inp, width: '100%' }}
-          autoFocus
-        />
-        {claimError && <p style={{ fontSize: '0.8rem', color: 'var(--error)' }}>{claimError}</p>}
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button onClick={() => { setClaimPrompt(false); setClaimError('') }}
-            style={{ padding: '0.4rem 1rem', borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg)', fontFamily: 'inherit', fontSize: '0.875rem', cursor: 'pointer' }}>cancel</button>
-          <button onClick={() => claimUsername(claimInput)}
-            style={{ padding: '0.4rem 1.25rem', borderRadius: 6, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontSize: '0.875rem', cursor: 'pointer' }}>claim</button>
-        </div>
-      </main>
-    )
-  }
-
   return (
     <main style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', maxWidth: 760, margin: '0 auto', padding: '1rem' }}>
       <header style={{ marginBottom: '1.5rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
           <h1 style={{ fontSize: 'clamp(1.25rem, 3vw, 1.75rem)', fontWeight: 700, letterSpacing: '-0.02em' }}>notechat</h1>
-          {editUser && (
-            <span style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>
-              editing as <span style={{ color: 'var(--fg)' }}>{editUser}</span>
-              <button onClick={() => { setClaimInput(editUser); setClaimPrompt(true) }}
-                style={{ marginLeft: '0.4rem', background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: '0.75rem', fontFamily: 'inherit', padding: 0 }}>change</button>
-            </span>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            {showUserEdit ? (
+              <form onSubmit={e => { e.preventDefault(); saveUsername(userEditInput) }} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                <input value={userEditInput} onChange={e => setUserEditInput(e.target.value)} placeholder="your name (optional)" autoFocus
+                  style={{ ...inp, fontSize: '0.78rem', padding: '0.25rem 0.5rem' }} />
+                <button type="submit" style={{ padding: '0.25rem 0.6rem', borderRadius: 5, border: 'none', background: 'var(--accent)', color: '#fff', fontFamily: 'inherit', fontSize: '0.75rem', cursor: 'pointer' }}>save</button>
+                <button type="button" onClick={() => setShowUserEdit(false)} style={{ padding: '0.25rem 0.5rem', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted)', fontFamily: 'inherit', fontSize: '0.75rem', cursor: 'pointer' }}>cancel</button>
+              </form>
+            ) : (
+              <button onClick={() => { setUserEditInput(editUser); setShowUserEdit(true) }}
+                style={{ fontSize: '0.75rem', color: 'var(--muted)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', padding: 0 }}>
+                {editUser ? <>signed as <span style={{ color: 'var(--fg)' }}>{editUser}</span></> : 'sign notes (optional)'}
+              </button>
+            )}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           {(['chat', 'notes'] as const).map(t => (
@@ -448,13 +392,10 @@ export default function Home() {
               </>
             ) : null}
 
-            {/* author line */}
             {activeNote && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.15rem' }}>
-                <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
-                  {activeNote.author ? <>by <span style={{ color: 'var(--fg)' }}>{activeNote.author}</span></> : 'anonymous'}
-                  {' · '}{timeAgo(activeNote.updated_at)}
-                </span>
+              <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '0.15rem' }}>
+                {activeNote.author ? <>by <span style={{ color: 'var(--fg)' }}>{activeNote.author}</span></> : 'anonymous'}
+                {' · '}{timeAgo(activeNote.updated_at)}
               </div>
             )}
 
