@@ -140,8 +140,9 @@ export default function Home() {
     setShowUserEdit(false)
   }
 
-  // session id for anonymous chat — resets on every page load
-  const sessionId = useRef(randomSessionId())
+  // session id — generated once on mount, stable for the whole session, resets on refresh
+  const [sessionId, setSessionId] = useState('')
+  useEffect(() => { setSessionId(randomSessionId()) }, [])
 
   const [tab, setTab] = useState<'chat' | 'notes'>('chat')
   const [messages, setMessages] = useState<Message[]>([])
@@ -187,8 +188,7 @@ export default function Home() {
     e.preventDefault()
     if (!msgInput.trim() || sending) return
     setSending(true); setSendError('')
-    // use typed name or fall back to session id
-    const effectiveName = username.trim() || sessionId.current
+    const effectiveName = username.trim() || sessionId
     const res = await fetch('/api/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -343,7 +343,7 @@ export default function Home() {
           </div>
           <form onSubmit={sendMessage} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <input value={username} onChange={e => setUsername(e.target.value)}
-              placeholder={`name (blank = ${sessionId.current})`}
+              placeholder={sessionId ? `name (blank = ${sessionId})` : 'name (optional)'}
               style={{ ...inp, width: '100%' }} />
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <input value={msgInput} onChange={e => setMsgInput(e.target.value)} placeholder="message or image url..." style={{ ...inp, flex: 1 }} />
